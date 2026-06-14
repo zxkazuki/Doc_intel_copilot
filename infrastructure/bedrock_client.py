@@ -48,9 +48,24 @@ def get_bedrock_client():
     return boto3.client("bedrock-runtime", region_name=settings.aws_region)
 
 
+def _detect_image_type(file_bytes: bytes) -> str | None:
+    """Detect actual image media type from file magic bytes."""
+    if file_bytes[:4] == b"RIFF" and file_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    if file_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if file_bytes[:2] == b"\xff\xd8":
+        return "image/jpeg"
+    return None
+
+
 def _build_file_block(file_bytes: bytes, media_type: str) -> dict:
     """Build the appropriate content block for a file attachment."""
     encoded = base64.standard_b64encode(file_bytes).decode("utf-8")
+
+    # For images, detect actual type from content (handles renamed files)
+    if media_type.startswith("image/"):
+        media_type = _detect_image_type(file_bytes) or media_type
 
     if media_type == "application/pdf":
         return {
