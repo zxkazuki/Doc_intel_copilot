@@ -1,9 +1,14 @@
-"""Painel de Revisão — visualização lado a lado e validação de dados extraídos."""
+"""Painel de Revisão — visualização lado a lado, validação e ações sobre o documento."""
+
+import time
 
 import streamlit as st
 
 from modules.review import approve_document, reject_document, correct_field, FieldCorrection
 from modules.history import get_document_history, get_document_detail, HistoryFilters
+from modules.laudo import generate_laudo
+from modules.reporting import build_review_pdf, build_laudo_pdf
+from modules.chat import chat_with_agent
 from infrastructure.s3_client import generate_presigned_url
 
 
@@ -86,7 +91,7 @@ with col_fields:
         )
         st.session_state[state_key][name] = current_value
 
-# --- Action buttons ---
+# --- Approve / Reject buttons ---
 st.divider()
 btn_approve, btn_reject, _ = st.columns([1, 1, 3])
 
@@ -94,7 +99,6 @@ approve_clicked = btn_approve.button("✅ Aprovar", type="primary", use_containe
 reject_clicked = btn_reject.button("❌ Rejeitar", type="secondary", use_container_width=True)
 
 if approve_clicked:
-    # Record corrections for changed fields
     corrections_failed = False
     for field_data in fields:
         name = field_data["name"]
@@ -129,3 +133,98 @@ if reject_clicked:
         st.rerun()
     else:
         st.error("Falha ao rejeitar documento. Tente novamente.")
+
+# --- Export & Actions ---
+st.divider()
+st.subheader("📤 Exportações e Ações")
+
+laudo_key = f"laudo_{selected_id}"
+file_stem = document.get("file_name", "documento").rsplit(".", 1)[0]
+
+col1, col2, col3, col4 = st.columns(4)
+
+# 1. Export PDF (review data)
+with col1:
+    pdf_bytes = build_review_pdf(detail)
+    st.download_button(
+        "📄 Exportar PDF",
+        data=pdf_bytes,
+        file_name=f"{file_stem}_revisao.pdf",
+        mime="application/pdf",
+        use_container_width=True,
+    )
+
+# 2. Generate + export AI laudo
+with col2:
+    if st.button("🧾 Exportar Revisão (Laudo IA)", use_container_width=True):
+        with st.spinner("Gerando laudo com IA..."):
+            result = generate_laudo(selected_id)
+        if result.success:
+            st.session_state[laudo_key] = result.content
+        else:
+            st.error(result.error_message or "Falha ao gerar laudo.")
+
+# 3. Export to system (fake)
+with col3:
+    if st.button("🗄️ Exportar para Sistema", use_container_width=True):
+        progress = st.progress(0, text="Conectando ao sistema...")
+        steps = [
+            (20, "Autenticando no ERP..."),
+            (45, "Validando dados extraídos..."),
+            (70, "Enviando registros..."),
+            (90, "Confirmando integração..."),
+            (100, "Concluído!"),
+        ]
+        for pct, label in steps:
+            time.sleep(0.6)
+            progress.progress(pct, text=label)
+        st.success("✅ Seus dados foram inputados no sistema XPTO ERP com sucesso!")
+
+# 4. Chat toggle
+with col4:
+    chat_open_key = f"chat_open_{selected_id}"
+    if st.button("💬 Conversar com Agente IA", use_container_width=True):
+        st.session_state[chat_open_key] = not st.session_state.get(chat_open_key, False)
+
+# Show generated laudo (if any) with download
+if st.session_state.get(laudo_key):
+    st.divider()
+    st.subheader("🧾 Laudo de Revisão (IA)")
+    st.markdown(st.session_state[laudo_key])
+    laudo_pdf = build_laudo_pdf(detail, st.session_state[laudo_key])
+    st.download_button(
+        "⬇️ Baixar Laudo em PDF",
+        data=laudo_pdf,
+        file_name=f"{file_stem}_laudo.pdf",
+        mime="application/pdf",
+    )
+
+# --- AI Chat interface ---
+if st.session_state.get(f"chat_open_{selected_id}", False):
+    st.divider()
+    st.subheader("💬 Agente de IA — Converse sobre o documento")
+
+    history_key = f"chat_history_{selected_id}"
+    if history_key not in st.session_state:
+        st.session_state[history_key] = []
+
+    for msg in st.session_state[history_key]:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    user_msg = st.chat_input("Pergunte sobre o documento, insights ou laudo...")
+    if user_msg:
+        st.session_state[history_key].append({"role": "user", "content": user_msg})
+        with st.chat_message("user"):
+            st.markdown(user_msg)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Pensando..."):
+                answer = chat_with_agent(
+                    document_id=selected_id,
+                    history=st.session_state[history_key],
+                    laudo_text=st.session_state.get(laudo_key, ""),
+                )
+            st.markdown(answer)
+
+        st.session_state[history_key].append({"role": "assistant", "content": answer})

@@ -1,194 +1,89 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: >
-  Document Intelligence Copilot - ECS Fargate deployment with DynamoDB, S3, and Bedrock access.
+Description: Doc Intel Copilot - Demo stack (EC2 Ubuntu + S3 + DynamoDB + Bedrock)
 
 Parameters:
-  EnvironmentName:
-    Type: String
-    Default: doc-intel-copilot
-    Description: Name prefix for all resources
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: SSH key pair for EC2 access
 
-  ContainerImage:
+  InstanceType:
     Type: String
-    Description: ECR image URI for the Streamlit application
+    Default: t3.small
+    AllowedValues: [t3.micro, t3.small, t3.medium]
 
   BedrockModelId:
     Type: String
     Default: us.anthropic.claude-sonnet-4-6
-    Description: Bedrock model ID for AI processing
-
-  MaxFileSizeMB:
-    Type: Number
-    Default: 20
-    Description: Maximum file upload size in MB
 
 Resources:
-  # --- VPC ---
   VPC:
     Type: AWS::EC2::VPC
     Properties:
-      CidrBlock: 10.0.0.0/16
+      CidrBlock: 10.1.0.0/16
       EnableDnsHostnames: true
       EnableDnsSupport: true
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-vpc
 
-  InternetGateway:
-    Type: AWS::EC2::InternetGateway
+  Subnet:
+    Type: AWS::EC2::Subnet
     Properties:
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-igw
+      VpcId: !Ref VPC
+      CidrBlock: 10.1.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
 
-  InternetGatewayAttachment:
+  IGW:
+    Type: AWS::EC2::InternetGateway
+
+  IGWAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
-      InternetGatewayId: !Ref InternetGateway
       VpcId: !Ref VPC
+      InternetGatewayId: !Ref IGW
 
-  PublicSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      AvailabilityZone: !Select [0, !GetAZs '']
-      CidrBlock: 10.0.1.0/24
-      MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-public-1
-
-  PublicSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      AvailabilityZone: !Select [1, !GetAZs '']
-      CidrBlock: 10.0.2.0/24
-      MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-public-2
-
-  PrivateSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      AvailabilityZone: !Select [0, !GetAZs '']
-      CidrBlock: 10.0.3.0/24
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-private-1
-
-  PrivateSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      AvailabilityZone: !Select [1, !GetAZs '']
-      CidrBlock: 10.0.4.0/24
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-private-2
-
-  NatGatewayEIP:
-    Type: AWS::EC2::EIP
-    DependsOn: InternetGatewayAttachment
-    Properties:
-      Domain: vpc
-
-  NatGateway:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatGatewayEIP.AllocationId
-      SubnetId: !Ref PublicSubnet1
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-nat
-
-  PublicRouteTable:
+  RouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-public-rt
 
-  DefaultPublicRoute:
+  PublicRoute:
     Type: AWS::EC2::Route
-    DependsOn: InternetGatewayAttachment
+    DependsOn: IGWAttachment
     Properties:
-      RouteTableId: !Ref PublicRouteTable
+      RouteTableId: !Ref RouteTable
       DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref InternetGateway
+      GatewayId: !Ref IGW
 
-  PublicSubnet1RouteTableAssociation:
+  SubnetRouteTableAssoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      RouteTableId: !Ref PublicRouteTable
-      SubnetId: !Ref PublicSubnet1
+      SubnetId: !Ref Subnet
+      RouteTableId: !Ref RouteTable
 
-  PublicSubnet2RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
+  SG:
+    Type: AWS::EC2::SecurityGroup
     Properties:
-      RouteTableId: !Ref PublicRouteTable
-      SubnetId: !Ref PublicSubnet2
-
-  PrivateRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
+      GroupDescription: Allow SSH and Streamlit
       VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-private-rt
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8501
+          ToPort: 8501
+          CidrIp: 0.0.0.0/0
 
-  DefaultPrivateRoute:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway
-
-  PrivateSubnet1RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      SubnetId: !Ref PrivateSubnet1
-
-  PrivateSubnet2RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      SubnetId: !Ref PrivateSubnet2
-
-  # --- S3 Bucket ---
-  DocumentsBucket:
+  DocsBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub ${EnvironmentName}-documents-${AWS::AccountId}
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      VersioningConfiguration:
-        Status: Enabled
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-documents
+      BucketName: !Sub doc-intel-copilot-docs-${AWS::AccountId}
 
-  # --- DynamoDB Tables ---
   DocumentsTable:
     Type: AWS::DynamoDB::Table
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
     Properties:
-      TableName: Documents
+      TableName: doc-intel-documents
       BillingMode: PAY_PER_REQUEST
-      SSESpecification:
-        SSEEnabled: true
       AttributeDefinitions:
         - AttributeName: document_id
           AttributeType: S
@@ -218,42 +113,24 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
-      PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: true
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-documents-table
 
   ExtractionsTable:
     Type: AWS::DynamoDB::Table
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
     Properties:
-      TableName: Extractions
+      TableName: doc-intel-extractions
       BillingMode: PAY_PER_REQUEST
-      SSESpecification:
-        SSEEnabled: true
       AttributeDefinitions:
         - AttributeName: document_id
           AttributeType: S
       KeySchema:
         - AttributeName: document_id
           KeyType: HASH
-      PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: true
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-extractions-table
 
   InsightsTable:
     Type: AWS::DynamoDB::Table
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
     Properties:
-      TableName: Insights
+      TableName: doc-intel-insights
       BillingMode: PAY_PER_REQUEST
-      SSESpecification:
-        SSEEnabled: true
       AttributeDefinitions:
         - AttributeName: insight_id
           AttributeType: S
@@ -275,21 +152,12 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
-      PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: true
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-insights-table
 
-  HumanReviewsTable:
+  ReviewsTable:
     Type: AWS::DynamoDB::Table
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
     Properties:
-      TableName: HumanReviews
+      TableName: doc-intel-reviews
       BillingMode: PAY_PER_REQUEST
-      SSESpecification:
-        SSEEnabled: true
       AttributeDefinitions:
         - AttributeName: review_id
           AttributeType: S
@@ -311,264 +179,121 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
-      PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: true
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-reviews-table
 
-  # --- ECS Cluster ---
-  ECSCluster:
-    Type: AWS::ECS::Cluster
-    Properties:
-      ClusterName: !Sub ${EnvironmentName}-cluster
-      ClusterSettings:
-        - Name: containerInsights
-          Value: enabled
-
-  # --- ECR Repository ---
-  ECRRepository:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: !Sub ${EnvironmentName}
-      ImageScanningConfiguration:
-        ScanOnPush: true
-      EncryptionConfiguration:
-        EncryptionType: AES256
-
-  # --- IAM Roles ---
-  TaskExecutionRole:
+  EC2Role:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub ${EnvironmentName}-task-execution-role
+      RoleName: doc-intel-copilot-ec2-role
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
-
-  TaskRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub ${EnvironmentName}-task-role
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
+              Service: ec2.amazonaws.com
             Action: sts:AssumeRole
       Policies:
-        - PolicyName: S3Access
+        - PolicyName: DocIntelAccess
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action:
-                  - s3:PutObject
-                  - s3:GetObject
-                  - s3:DeleteObject
-                Resource: !Sub ${DocumentsBucket.Arn}/*
+                Action: [s3:PutObject, s3:GetObject, s3:DeleteObject]
+                Resource: !Sub ${DocsBucket.Arn}/*
               - Effect: Allow
-                Action:
-                  - s3:ListBucket
-                Resource: !GetAtt DocumentsBucket.Arn
-        - PolicyName: DynamoDBAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
+                Action: s3:ListBucket
+                Resource: !GetAtt DocsBucket.Arn
               - Effect: Allow
-                Action:
-                  - dynamodb:PutItem
-                  - dynamodb:GetItem
-                  - dynamodb:UpdateItem
-                  - dynamodb:Query
-                  - dynamodb:Scan
+                Action: [dynamodb:PutItem, dynamodb:GetItem, dynamodb:UpdateItem, dynamodb:Query, dynamodb:Scan]
                 Resource:
                   - !GetAtt DocumentsTable.Arn
                   - !Sub ${DocumentsTable.Arn}/index/*
                   - !GetAtt ExtractionsTable.Arn
                   - !GetAtt InsightsTable.Arn
                   - !Sub ${InsightsTable.Arn}/index/*
-                  - !GetAtt HumanReviewsTable.Arn
-                  - !Sub ${HumanReviewsTable.Arn}/index/*
-        - PolicyName: BedrockAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
+                  - !GetAtt ReviewsTable.Arn
+                  - !Sub ${ReviewsTable.Arn}/index/*
               - Effect: Allow
-                Action:
-                  - bedrock:InvokeModel
-                Resource: !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}
+                Action: bedrock:InvokeModel
+                Resource: '*'
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: '*'
 
-  # --- CloudWatch Logs ---
-  LogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
     Properties:
-      LogGroupName: !Sub /ecs/${EnvironmentName}
-      RetentionInDays: 30
+      Roles: [!Ref EC2Role]
 
-  # --- ECS Task Definition ---
-  TaskDefinition:
-    Type: AWS::ECS::TaskDefinition
+  EC2Instance:
+    Type: AWS::EC2::Instance
     Properties:
-      Family: !Sub ${EnvironmentName}
-      Cpu: '512'
-      Memory: '1024'
-      NetworkMode: awsvpc
-      RequiresCompatibilities:
-        - FARGATE
-      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
-      TaskRoleArn: !GetAtt TaskRole.Arn
-      ContainerDefinitions:
-        - Name: streamlit-app
-          Image: !Ref ContainerImage
-          PortMappings:
-            - ContainerPort: 8501
-              Protocol: tcp
-          Environment:
-            - Name: AWS_REGION
-              Value: !Ref AWS::Region
-            - Name: S3_BUCKET_NAME
-              Value: !Ref DocumentsBucket
-            - Name: DYNAMODB_DOCUMENTS_TABLE
-              Value: !Ref DocumentsTable
-            - Name: DYNAMODB_EXTRACTIONS_TABLE
-              Value: !Ref ExtractionsTable
-            - Name: DYNAMODB_INSIGHTS_TABLE
-              Value: !Ref InsightsTable
-            - Name: DYNAMODB_REVIEWS_TABLE
-              Value: !Ref HumanReviewsTable
-            - Name: BEDROCK_MODEL_ID
-              Value: !Ref BedrockModelId
-            - Name: MAX_FILE_SIZE_MB
-              Value: !Ref MaxFileSizeMB
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref LogGroup
-              awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: ecs
-          HealthCheck:
-            Command:
-              - CMD-SHELL
-              - curl -f http://localhost:8501/_stcore/health || exit 1
-            Interval: 30
-            Timeout: 5
-            Retries: 3
-            StartPeriod: 60
-
-  # --- Security Groups ---
-  ALBSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Security group for ALB
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      ImageId: ami-0f9de6e2d2f067fca
+      SubnetId: !Ref Subnet
+      SecurityGroupIds: [!Ref SG]
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-alb-sg
+          Value: doc-intel-copilot
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+          apt-get update -y
+          apt-get install -y python3.11 python3.11-venv python3-pip git
 
-  ECSSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Security group for ECS tasks
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 8501
-          ToPort: 8501
-          SourceSecurityGroupId: !Ref ALBSecurityGroup
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-ecs-sg
+          cd /home/ubuntu
+          git clone https://github.com/zxkazuki/Doc_intel_copilot.git app
+          cd app
 
-  # --- Application Load Balancer ---
-  ApplicationLoadBalancer:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-    Properties:
-      Name: !Sub ${EnvironmentName}-alb
-      Scheme: internet-facing
-      Type: application
-      Subnets:
-        - !Ref PublicSubnet1
-        - !Ref PublicSubnet2
-      SecurityGroups:
-        - !Ref ALBSecurityGroup
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-alb
+          python3.11 -m venv .venv
+          source .venv/bin/activate
+          pip install -r requirements.txt
 
-  TargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    Properties:
-      Name: !Sub ${EnvironmentName}-tg
-      Port: 8501
-      Protocol: HTTP
-      VpcId: !Ref VPC
-      TargetType: ip
-      HealthCheckPath: /_stcore/health
-      HealthCheckIntervalSeconds: 30
-      HealthCheckTimeoutSeconds: 5
-      HealthyThresholdCount: 2
-      UnhealthyThresholdCount: 3
+          cat > .env << 'EOF'
+          AWS_REGION=${AWS::Region}
+          S3_BUCKET_NAME=${DocsBucket}
+          DYNAMODB_DOCUMENTS_TABLE=doc-intel-documents
+          DYNAMODB_EXTRACTIONS_TABLE=doc-intel-extractions
+          DYNAMODB_INSIGHTS_TABLE=doc-intel-insights
+          DYNAMODB_REVIEWS_TABLE=doc-intel-reviews
+          BEDROCK_MODEL_ID=${BedrockModelId}
+          MAX_FILE_SIZE_MB=20
+          EOF
 
-  ALBListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      LoadBalancerArn: !Ref ApplicationLoadBalancer
-      Port: 80
-      Protocol: HTTP
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref TargetGroup
+          cat > /etc/systemd/system/streamlit.service << 'UNIT'
+          [Unit]
+          Description=Streamlit Doc Intel Copilot
+          After=network.target
 
-  # --- ECS Service ---
-  ECSService:
-    Type: AWS::ECS::Service
-    DependsOn: ALBListener
-    Properties:
-      ServiceName: !Sub ${EnvironmentName}-service
-      Cluster: !Ref ECSCluster
-      TaskDefinition: !Ref TaskDefinition
-      DesiredCount: 1
-      LaunchType: FARGATE
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          AssignPublicIp: DISABLED
-          Subnets:
-            - !Ref PrivateSubnet1
-            - !Ref PrivateSubnet2
-          SecurityGroups:
-            - !Ref ECSSecurityGroup
-      LoadBalancers:
-        - ContainerName: streamlit-app
-          ContainerPort: 8501
-          TargetGroupArn: !Ref TargetGroup
+          [Service]
+          User=ubuntu
+          WorkingDirectory=/home/ubuntu/app
+          ExecStart=/home/ubuntu/app/.venv/bin/streamlit run app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+
+          systemctl daemon-reload
+          systemctl enable streamlit
+          systemctl start streamlit
 
 Outputs:
-  ApplicationURL:
-    Description: URL da aplicacao via ALB
-    Value: !Sub http://${ApplicationLoadBalancer.DNSName}
+  AppURL:
+    Description: Streamlit application URL
+    Value: !Sub http://${EC2Instance.PublicIp}:8501
 
-  ECRRepositoryURI:
-    Description: URI do repositorio ECR para push da imagem
-    Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}
+  EC2PublicIP:
+    Description: EC2 public IP
+    Value: !GetAtt EC2Instance.PublicIp
 
-  S3BucketName:
-    Description: Nome do bucket S3 para documentos
-    Value: !Ref DocumentsBucket
+  S3Bucket:
+    Description: S3 bucket for documents
+    Value: !Ref DocsBucket
 
-  ECSClusterName:
-    Description: Nome do cluster ECS
-    Value: !Ref ECSCluster
+  SSHCommand:
+    Description: SSH command
+    Value: !Sub ssh -i ${KeyPairName}.pem ubuntu@${EC2Instance.PublicIp}

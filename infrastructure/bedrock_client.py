@@ -155,3 +155,55 @@ def invoke_claude_json(
         return json.loads(cleaned)
     except json.JSONDecodeError as e:
         raise ValueError(f"Failed to parse Claude response as JSON: {e}") from e
+
+
+@with_retry(max_attempts=2, backoff_base=2.0)
+def invoke_claude_text(
+    prompt: str,
+    system: str = "",
+    messages: list[dict] | None = None,
+    max_tokens: int = 4096,
+) -> str:
+    """Invoca Claude e retorna a resposta como texto livre.
+
+    Se `messages` for fornecido, usa o histórico de conversa completo
+    (cada item: {"role": "user"|"assistant", "content": "..."}).
+    Caso contrário, envia apenas o `prompt` como mensagem do usuário.
+    """
+    settings = get_settings()
+    client = get_bedrock_client()
+
+    if messages is None:
+        messages = [{"role": "user", "content": prompt}]
+
+    body: dict = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": max_tokens,
+        "messages": messages,
+    }
+    if system:
+        body["system"] = system
+
+    try:
+        response = client.invoke_model(
+            modelId=settings.bedrock_model_id,
+            contentType="application/json",
+            accept="application/json",
+            body=json.dumps(body),
+        )
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code in ("ThrottlingException", "ServiceUnavailableException"):
+            raise ConnectionError(f"Bedrock service unavailable: {error_code}") from e
+        if "timeout" in str(e).lower():
+            raise TimeoutError(f"Bedrock request timed out: {e}") from e
+        raise
+    except ReadTimeoutError as e:
+        raise TimeoutError(f"Bedrock read timeout: {e}") from e
+
+    response_body = json.loads(response["body"].read())
+
+    return next(
+        (block["text"] for block in response_body.get("content", []) if block.get("type") == "text"),
+        "",
+    )
