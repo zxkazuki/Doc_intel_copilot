@@ -54,18 +54,21 @@ def _build_file_block(file_bytes: bytes, media_type: str) -> dict:
 
     if media_type == "application/pdf":
         return {
-            "document": {
-                "format": "pdf",
-                "name": "document",
-                "source": {"bytes": encoded},
-            }
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": encoded,
+            },
         }
 
     return {
-        "image": {
-            "format": media_type.split("/")[-1],
-            "source": {"bytes": encoded},
-        }
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": media_type,
+            "data": encoded,
+        },
     }
 
 
@@ -96,7 +99,7 @@ def invoke_claude_json(
     content: list[dict] = []
     if file_bytes is not None and media_type is not None:
         content.append(_build_file_block(file_bytes, media_type))
-    content.append({"text": prompt})
+    content.append({"type": "text", "text": prompt})
 
     body: dict = {
         "anthropic_version": "bedrock-2023-05-31",
