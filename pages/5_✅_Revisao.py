@@ -6,6 +6,15 @@ from modules.review import approve_document, reject_document, correct_field, Fie
 from modules.history import get_document_history, get_document_detail, HistoryFilters
 from infrastructure.s3_client import generate_presigned_url
 
+
+def _to_float(value) -> float:
+    """Safely convert a confidence value (str/Decimal/float/None) to float."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 st.set_page_config(page_title="Revisão", page_icon="✅", layout="wide")
 st.header("✅ Painel de Revisão")
 st.markdown("Revise os dados extraídos lado a lado com o documento original.")
@@ -69,7 +78,7 @@ with col_fields:
 
     for field_data in fields:
         name = field_data["name"]
-        confidence = field_data.get("confidence", 0.0)
+        confidence = _to_float(field_data.get("confidence", 0.0))
         current_value = st.text_input(
             f"{name} (confiança: {confidence:.0%})",
             value=st.session_state[state_key].get(name, ""),

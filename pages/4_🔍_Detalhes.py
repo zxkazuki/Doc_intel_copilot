@@ -3,8 +3,17 @@
 import streamlit as st
 import pandas as pd
 
-from modules.history import get_document_detail
+from modules.history import get_document_history, get_document_detail, HistoryFilters
 from infrastructure.s3_client import generate_presigned_url
+
+
+def _to_float(value) -> float:
+    """Safely convert a value (str/Decimal/float/None) to float."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
 
 SEVERITY_EMOJI = {"Critical": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🟢"}
 
@@ -84,7 +93,7 @@ def _render_extraction_table(extraction: dict | None) -> None:
         {
             "Campo": f.get("name", "—"),
             "Valor": f.get("value") or "—",
-            "Confiança": f"{f.get('confidence', 0):.0%}",
+            "Confiança": f"{_to_float(f.get('confidence', 0)):.0%}",
         }
         for f in fields
     ]
@@ -183,11 +192,23 @@ def main() -> None:
     st.set_page_config(page_title="Detalhes", page_icon="🔍", layout="wide")
 
     document_id = st.query_params.get("document_id")
+
     if not document_id:
-        st.warning("Selecione um documento no Histórico.")
-        if st.button("← Voltar ao Histórico"):
-            st.switch_page("pages/3_📋_Historico.py")
-        return
+        documents = get_document_history(HistoryFilters(page_size=100)).items
+        if not documents:
+            st.info("Nenhum documento processado ainda.")
+            return
+
+        options = {
+            doc["document_id"]: f"{doc.get('file_name', 'Documento')} "
+            f"({doc.get('category', '—')})"
+            for doc in documents
+        }
+        document_id = st.selectbox(
+            "Selecione um documento",
+            options=list(options.keys()),
+            format_func=lambda doc_id: options[doc_id],
+        )
 
     data = get_document_detail(document_id)
     if data is None:

@@ -4,6 +4,15 @@ import streamlit as st
 import pandas as pd
 
 from modules.dashboard import get_dashboard_data, DashboardData, VALID_CATEGORIES
+from modules.history import get_document_history, get_document_detail, HistoryFilters
+
+
+def _to_float(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
 
 SEVERITY_EMOJI: dict[str, str] = {
     "Critical": "🔴",
@@ -62,6 +71,45 @@ def _render_insights_by_category(data: DashboardData) -> None:
                 st.divider()
 
 
+def _render_document_insights_selector() -> None:
+    """Renderiza seletor de documento e exibe os insights do documento escolhido."""
+    st.subheader("🔍 Insights por Documento")
+
+    documents = get_document_history(HistoryFilters(page_size=100)).items
+    if not documents:
+        st.info("Nenhum documento disponível.")
+        return
+
+    labels = {
+        doc.get("document_id"): f"{doc.get('file_name', '—')} ({doc.get('category', '—')})"
+        for doc in documents
+    }
+
+    selected_id = st.selectbox(
+        "Selecione um documento",
+        options=list(labels),
+        format_func=lambda doc_id: labels.get(doc_id, doc_id),
+    )
+
+    if not selected_id:
+        return
+
+    detail = get_document_detail(selected_id)
+    insights = detail.get("insights", []) if detail else []
+    if not insights:
+        st.info("Nenhum insight para este documento.")
+        return
+
+    for insight in insights:
+        severity = insight.get("severity", "Low")
+        emoji = SEVERITY_EMOJI.get(severity, "⚪")
+        title = insight.get("title", "Sem título")
+        description = insight.get("description", "")
+        st.markdown(f"{emoji} **{title}** — _{severity}_")
+        if description:
+            st.caption(description)
+
+
 def _render_alerts(data: DashboardData) -> None:
     """Renderiza lista de alertas (max 20, Critical primeiro)."""
     st.subheader("🚨 Alertas")
@@ -115,6 +163,8 @@ def main() -> None:
     _render_kpis(data)
     st.divider()
     _render_insights_by_category(data)
+    st.divider()
+    _render_document_insights_selector()
     st.divider()
     _render_alerts(data)
     st.divider()
