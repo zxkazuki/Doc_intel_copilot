@@ -11,6 +11,23 @@ from modules.reporting import build_review_pdf, build_laudo_pdf
 from modules.chat import chat_with_agent
 from infrastructure.s3_client import generate_presigned_url
 
+STATUS_LABELS = {
+    "pending_review": "🟡 Aguardando Revisão",
+    "approved": "🟢 Aprovado",
+    "rejected": "🔴 Rejeitado",
+    "extracted": "🔵 Extraído",
+    "uploaded": "🔵 Enviado",
+}
+
+STATUS_FILTERS = {
+    "Aguardando Revisão": "pending_review",
+    "Aprovados": "approved",
+    "Rejeitados": "rejected",
+    "Todos": None,
+}
+
+ACTION_LABELS = {"approve": "✅ Aprovação", "reject": "❌ Rejeição", "correction": "✏️ Correção"}
+
 
 def _to_float(value) -> float:
     """Safely convert a confidence value (str/Decimal/float/None) to float."""
@@ -20,24 +37,42 @@ def _to_float(value) -> float:
         return 0.0
 
 
+def _status_label(status: str) -> str:
+    """Return a human-friendly status badge."""
+    return STATUS_LABELS.get(status, status)
+
+
 st.set_page_config(page_title="Revisão", page_icon="✅", layout="wide")
 st.header("✅ Painel de Revisão")
 st.markdown("Revise os dados extraídos lado a lado com o documento original.")
 
-# Load pending documents
-pending_docs = get_document_history(HistoryFilters(status="pending_review")).items
+# --- Status filter + document selector ---
+col_filter, col_doc_select = st.columns([1, 3])
 
-if not pending_docs:
-    st.info("Nenhum documento aguardando revisão.")
+with col_filter:
+    filter_label = st.selectbox(
+        "Filtrar por status",
+        options=list(STATUS_FILTERS.keys()),
+        index=0,
+    )
+status_filter = STATUS_FILTERS[filter_label]
+
+docs = get_document_history(HistoryFilters(status=status_filter, page_size=100)).items
+
+if not docs:
+    st.info("Nenhum documento encontrado para o filtro selecionado.")
     st.stop()
 
-# Document selector
-doc_options = {doc["document_id"]: doc.get("file_name", doc["document_id"]) for doc in pending_docs}
-selected_id = st.selectbox(
-    "Selecione um documento para revisão",
-    options=list(doc_options.keys()),
-    format_func=lambda doc_id: doc_options[doc_id],
-)
+with col_doc_select:
+    doc_options = {
+        doc["document_id"]: f"{doc.get('file_name', doc['document_id'])} — {_status_label(doc.get('status', ''))}"
+        for doc in docs
+    }
+    selected_id = st.selectbox(
+        "Selecione um documento",
+        options=list(doc_options.keys()),
+        format_func=lambda doc_id: doc_options[doc_id],
+    )
 
 # Load document detail
 detail = get_document_detail(selected_id)
@@ -48,6 +83,9 @@ if not detail:
 document = detail["document"]
 extraction = detail.get("extraction")
 fields = (extraction or {}).get("fields", [])
+current_status = document.get("status", "")
+
+st.markdown(f"**Status atual:** {_status_label(current_status)}")
 
 if not fields:
     st.warning("Nenhum campo extraído disponível para este documento.")
@@ -91,10 +129,15 @@ with col_fields:
         )
         st.session_state[state_key][name] = current_value
 
-# --- Approve / Reject buttons ---
+# --- Approve / Reject buttons (always available) ---
 st.divider()
-btn_approve, btn_reject, _ = st.columns([1, 1, 3])
+st.subheader("⚖️ Decisão de Revisão")
+if current_status == "approved":
+    st.success("Este documento já foi APROVADO. Você pode reprocessar a decisão se necessário.")
+elif current_status == "rejected":
+    st.error("Este documento já foi REJEITADO. Você pode reprocessar a decisão se necessário.")
 
+btn_approve, btn_reject, _ = st.columns([1, 1, 3])
 approve_clicked = btn_approve.button("✅ Aprovar", type="primary", use_container_width=True)
 reject_clicked = btn_reject.button("❌ Rejeitar", type="secondary", use_container_width=True)
 
@@ -134,7 +177,21 @@ if reject_clicked:
     else:
         st.error("Falha ao rejeitar documento. Tente novamente.")
 
-# --- Export & Actions ---
+# --- Review history (audit trail) ---
+reviews = detail.get("reviews", [])
+if reviews:
+    with st.expander(f"📝 Histórico de Revisões ({len(reviews)})", expanded=False):
+        for review in sorted(reviews, key=lambda r: r.get("timestamp", ""), reverse=True):
+            action = review.get("action", "—")
+            reviewer = review.get("reviewer_id", "Desconhecido")
+            timestamp = review.get("timestamp", "—")
+            st.markdown(f"**{ACTION_LABELS.get(action, action)}** — {reviewer} em `{timestamp}`")
+            if action == "correction" and review.get("field_name"):
+                original = review.get("original_value") or "—"
+                new = review.get("new_value") or "—"
+                st.caption(f"Campo **{review['field_name']}**: `{original}` → `{new}`")
+
+# --- Export & Actions (always available) ---
 st.divider()
 st.subheader("📤 Exportações e Ações")
 
