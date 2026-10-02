@@ -45,9 +45,9 @@ def _resolve_media_type(file_format: str) -> str:
     return MEDIA_TYPE_MAP.get(file_format.lower(), "application/octet-stream")
 
 
-def _parse_classification_response(response: dict | None) -> ClassificationResult | None:
+def _parse_classification_response(response: dict) -> ClassificationResult | None:
     """Parse and validate Bedrock classification response. Returns None if invalid."""
-    if response is None:
+    if not isinstance(response, dict):
         return None
 
     category_str = response.get("category")

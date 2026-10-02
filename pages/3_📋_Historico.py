@@ -5,6 +5,8 @@ import pandas as pd
 
 from modules.history import get_document_history, HistoryFilters
 
+st.set_page_config(page_title="Histórico", page_icon="📋", layout="wide")
+
 CATEGORY_OPTIONS: list[str] = [
     "Todas",
     "Contrato",
@@ -117,7 +119,6 @@ def _render_pagination(total: int, has_next: bool) -> None:
 
 def main() -> None:
     """Entry point da página Histórico."""
-    st.set_page_config(page_title="Histórico", page_icon="📋", layout="wide")
     st.title("📋 Histórico de Documentos")
 
     _init_session_state()

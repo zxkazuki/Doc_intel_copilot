@@ -6,6 +6,8 @@ import pandas as pd
 from modules.dashboard import get_dashboard_data, DashboardData, VALID_CATEGORIES
 from modules.history import get_document_history, get_document_detail, HistoryFilters
 
+st.set_page_config(page_title="Dashboard", page_icon="📊", layout="wide")
+
 
 def _to_float(value) -> float:
     try:
@@ -148,7 +150,6 @@ def _render_recent_documents(data: DashboardData) -> None:
 
 def main() -> None:
     """Entry point da página Dashboard."""
-    st.set_page_config(page_title="Dashboard", page_icon="📊", layout="wide")
     st.title("📊 Dashboard Operacional")
 
     data = get_dashboard_data()

@@ -150,11 +150,6 @@ def extract_fields(document_id: str) -> ExtractionResult:
         _set_error_status(document_id)
         return _error_result(document_id, f"Erro na extração: {e}")
 
-    # invoke_claude_json returns None when retry exhausted (timeout/connection)
-    if response is None:
-        _set_error_status(document_id)
-        return _error_result(document_id, "Timeout ou falha de conexão com Bedrock")
-
     # Parse response
     fields = _parse_extraction_response(response, category)
 

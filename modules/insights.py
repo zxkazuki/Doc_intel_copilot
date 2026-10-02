@@ -137,13 +137,14 @@ def _execute_insights_pipeline(document_id: str, settings) -> InsightsResult:
     category = document.get("category", "Documento Genérico")
     user_prompt = format_insights_user_prompt(fields_json, category)
 
-    response = invoke_claude_json(prompt=user_prompt, system=get_insights_system_prompt())
-
-    if response is None:
+    try:
+        response = invoke_claude_json(prompt=user_prompt, system=get_insights_system_prompt())
+    except Exception as e:
+        logger.error("Erro ao invocar Bedrock para insights: %s", e)
         _set_error_status(document_id)
         return InsightsResult(
             document_id=document_id, insights=[], success=False,
-            error_message="Timeout ao gerar insights. Tente novamente.",
+            error_message=f"Timeout ou falha ao gerar insights: {e}",
         )
 
     # Parse and validate

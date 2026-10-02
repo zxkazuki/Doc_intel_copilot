@@ -6,6 +6,8 @@ import pandas as pd
 from modules.history import get_document_history, get_document_detail, HistoryFilters
 from infrastructure.s3_client import generate_presigned_url
 
+st.set_page_config(page_title="Detalhes", page_icon="🔍", layout="wide")
+
 
 def _to_float(value) -> float:
     """Safely convert a value (str/Decimal/float/None) to float."""
@@ -189,8 +191,6 @@ def _render_navigation(status: str, document_id: str) -> None:
 
 def main() -> None:
     """Entry point da página de Detalhes."""
-    st.set_page_config(page_title="Detalhes", page_icon="🔍", layout="wide")
-
     document_id = st.query_params.get("document_id")
 
     if not document_id:

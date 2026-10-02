@@ -17,25 +17,39 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-def with_retry(max_attempts: int = 2, backoff_base: float = 2.0):
-    """Retry com backoff exponencial. Retorna None se todas tentativas falharem."""
+class BedrockRetryExhausted(RuntimeError):
+    """Levantada quando todas as tentativas de retry para o Bedrock falham."""
 
-    def decorator(func: Callable[..., T]) -> Callable[..., T | None]:
+
+def with_retry(max_attempts: int = 2, backoff_base: float = 2.0):
+    """Retry com backoff exponencial.
+
+    Captura apenas erros de infraestrutura (timeout/conexão).
+    Levanta BedrockRetryExhausted se todas as tentativas falharem.
+    Erros de negócio (ClientError de permissão, ValueError de JSON) propagam imediatamente.
+    """
+
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @wraps(func)
-        def wrapper(*args, **kwargs) -> T | None:
+        def wrapper(*args, **kwargs) -> T:
+            last_exc: Exception | None = None
             for attempt in range(max_attempts):
                 try:
                     return func(*args, **kwargs)
-                except (TimeoutError, ConnectionError, ReadTimeoutError):
+                except (TimeoutError, ConnectionError, ReadTimeoutError) as exc:
+                    last_exc = exc
                     logger.warning(
-                        "Attempt %d/%d failed for %s",
+                        "Attempt %d/%d failed for %s: %s",
                         attempt + 1,
                         max_attempts,
                         func.__name__,
+                        exc,
                     )
                     if attempt < max_attempts - 1:
                         time.sleep(backoff_base**attempt)
-            return None
+            raise BedrockRetryExhausted(
+                f"All {max_attempts} attempts failed for {func.__name__}"
+            ) from last_exc
 
         return wrapper
 
@@ -107,7 +121,13 @@ def invoke_claude_json(
     media_type: str | None = None,
     max_tokens: int = 4096,
 ) -> dict:
-    """Invoca Claude e parseia resposta como JSON. Suporta texto puro ou multimodal."""
+    """Invoca Claude e parseia resposta como JSON. Suporta texto puro ou multimodal.
+
+    Raises:
+        BedrockRetryExhausted: se todas as tentativas de timeout/conexão falharem.
+        ClientError: se o Bedrock retornar erro de API (permissão, modelo inválido etc.).
+        ValueError: se a resposta não puder ser parseada como JSON.
+    """
     settings = get_settings()
     client = get_bedrock_client()
 
@@ -169,6 +189,10 @@ def invoke_claude_text(
     Se `messages` for fornecido, usa o histórico de conversa completo
     (cada item: {"role": "user"|"assistant", "content": "..."}).
     Caso contrário, envia apenas o `prompt` como mensagem do usuário.
+
+    Raises:
+        BedrockRetryExhausted: se todas as tentativas de timeout/conexão falharem.
+        ClientError: se o Bedrock retornar erro de API.
     """
     settings = get_settings()
     client = get_bedrock_client()
